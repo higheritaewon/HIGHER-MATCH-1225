@@ -1201,7 +1201,7 @@ async function loadMessageList(){
 
     if(!canReply){
       inputEl.value = "";
-      inputEl.placeholder = "슈퍼메세지는 답장할 수 없습니다.";
+      inputEl.placeholder = "(20자 이내).";
       inputEl.disabled = true;
       sendBtn.disabled = true;
       $("#chat-info").textContent = "⚡ 슈퍼메세지 대화는 답장이 불가능합니다.";
@@ -1950,6 +1950,7 @@ detachFns.push(()=>off4());
 </body>
 
 </html>
+
 
 
 
