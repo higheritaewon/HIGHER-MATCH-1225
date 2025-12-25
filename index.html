@@ -894,16 +894,19 @@ function formatTime12(dt){
   // ✅ 메세지함 진입 버튼
   $("#btn-messages").onclick = async ()=>{ await loadMessageList(); go("messages"); };
   $("#super-send").onclick = async ()=>{
+  const btn = $("#super-send");
   const toUid = $("#super-to").value.trim();
   const text = $("#super-text").value.trim();
 
+  btn.disabled = true;
   await withLoading(async ()=>{
     await sendSuperMessage(toUid, text);
   });
+  btn.disabled = false;
 
-  // 성공하면 메뉴로 이동(원하면 그대로 남겨도 됨)
   go("menu");
 };
+
 
   
   // ✅ 대화창 뒤로가기: 대화목록으로 복귀
@@ -1072,37 +1075,19 @@ if(logoutSuper) logoutSuper.onclick = doLogout;
     }
   }
 
-  // 4) “한 번만” 규칙 확인
-  const sentSnap = await get(r(`superSent/${currentUid}/${toUid}`));
-  if(sentSnap.exists()){
-    return alertModal("슈퍼메세지는 한 사람에게 딱 1번만 보낼 수 있습니다.");
-  }
+// 4) “한 번만” 규칙 확인 + 예약(원자적 잠금)
+const sentRef = r(`superSent/${currentUid}/${toUid}`);
 
-  // 5) 실제 저장: 기존 messages 경로 재사용(채팅 UI 그대로 씀)
-  const pairKey = makeChatKey(currentUid, toUid);
-  const msgPath = r(`messages/${pairKey}`);
-  const id = Date.now()+"_"+Math.random().toString(36).slice(2,7);
+// 이미 true면 중단, 아니면 true로 "예약"을 먼저 걸어버림(중복 방지)
+const tx = await runTransaction(sentRef, (cur)=>{
+  if(cur === true) return;   // undefined 반환 => 트랜잭션 abort (이미 보냄)
+  return true;              // 처음이면 true로 세팅(예약 성공)
+});
 
-  const msgObj = {
-    from: currentUid,
-    to: toUid,
-    text: text.trim().slice(0,50),
-    read: false,
-    time: Date.now(),
-    super: true  // ✅ 슈퍼메세지 표시용 플래그
-  };
+if(!tx.committed){
+  return alertModal("슈퍼메세지는 한 사람에게 딱 1번만 보낼 수 있습니다.");
+}
 
-  // 6) 추가로 “팝업 알림용 inbox”에 넣기(받는사람에게만)
-  const inboxObj = {
-    from: currentUid,
-    text: msgObj.text,
-    time: msgObj.time,
-    seen: false
-  };
-
-  await update(msgPath, { [id]: msgObj });
-  await set(r(`superInbox/${toUid}/${currentUid}`), inboxObj);
-  await set(r(`superSent/${currentUid}/${toUid}`), true);
 
   await alertModal(`${toUid}번에게 슈퍼메세지를 보냈습니다!`);
 }
@@ -1949,6 +1934,7 @@ detachFns.push(()=>off4());
 </body>
 
 </html>
+
 
 
 
