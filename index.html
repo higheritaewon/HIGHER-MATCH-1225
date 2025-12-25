@@ -1124,34 +1124,41 @@ if(logoutSuper) logoutSuper.onclick = doLogout;
   }
 
   // ===================== 💬 메세지 기능 =====================
-  async function loadMessageList(){
+async function loadMessageList(){
   const wrap = $("#message-list");
   wrap.innerHTML = "";
 
+  // ✅ 0) 슈퍼메세지 인박스에서 상대 목록 먼저 가져오기 (여기서 superFromIds 정의!)
+  const superSnap = await get(r(`superInbox/${currentUid}`));
+  const superFromIds = superSnap.exists() ? Object.keys(superSnap.val()) : [];
+
+  // ✅ 1) 매치 상대 목록
   const matchSnap = await get(r(`matches/${currentUid}`));
   const matchData = matchSnap.exists() ? matchSnap.val() : {};
 
-  // ✅ 기존 매치 상대(조건 통과한 사람)
   const matchIds = Object.keys(matchData)
     .filter(k=>{
       const s = matchData[k]?.status;
       return s==="matched" || s==="meeting_requested" || s==="meeting_accepted";
     });
 
-  // ✅ 슈퍼메세지로 연결된 상대(매치 없어도 포함)
+  // ✅ 2) 합치기(중복 제거)
   const idSet = new Set([...matchIds, ...superFromIds]);
   const ids = Array.from(idSet).sort((a,b)=>Number(a)-Number(b));
 
-  if(ids.length===0){ $("#no-messages").classList.remove("hidden"); return; }
+  if(ids.length===0){
+    $("#no-messages").classList.remove("hidden");
+    return;
+  }
   $("#no-messages").classList.add("hidden");
 
-
-  // 상대별 미읽음 수 집계
+  // ✅ 3) 상대별 미읽음 수 집계
   const rows = await Promise.all(ids.map(async(other)=>{
-    const isSuperOnly = !matchData[other];  // ✅ 매치 데이터가 없으면 '슈퍼로만 연결'
+    const isSuperOnly = !matchData[other];  // 매치 데이터 없으면 '슈퍼로만 연결'
     const pairKey = makeChatKey(currentUid, other);
     const msSnap = await get(r(`messages/${pairKey}`));
     let unread = 0;
+
     if(msSnap.exists()){
       const msgs = msSnap.val();
       for(const id in msgs){
@@ -1159,29 +1166,24 @@ if(logoutSuper) logoutSuper.onclick = doLogout;
         if(m.to===currentUid && !m.read) unread++;
       }
     }
-    // HTML 문자열 반환
+
     return `
       <div class="list-item" data-open-chat="${other}">
         <div class="li-content">
-        <strong>${other}번</strong>
-        ${isSuperOnly ? ` <span class="badge" style="font-size:14px;">슈퍼</span>` : ``}
-      </div>
-
-        ${
-          unread>0
-          ? `<span class="badge badge-red">${unread}</span>`
-          : ``
-        }
+          <strong>${other}번</strong>
+          ${isSuperOnly ? ` <span class="badge" style="font-size:14px;">슈퍼</span>` : ``}
+        </div>
+        ${unread>0 ? `<span class="badge badge-red">${unread}</span>` : ``}
       </div>`;
   }));
 
   wrap.innerHTML = rows.join("");
 
-  // 클릭 핸들러
   wrap.querySelectorAll("[data-open-chat]").forEach(div=>{
     div.onclick = ()=> openChat(div.getAttribute("data-open-chat"));
   });
 }
+
 
   async function openChat(otherUid){
     $("#chat-with").textContent = otherUid;
@@ -1947,5 +1949,6 @@ detachFns.push(()=>off4());
 </body>
 
 </html>
+
 
 
