@@ -316,6 +316,12 @@
       <span id="msg-badge" class="badge hidden">0</span>
     </button>
 
+    <div class="spacer"></div>
+    <button class="menu-msg-button" id="btn-supermsg">
+      <span style="font-family:'Do Hyeon',sans-serif;font-size:22px;">⚡ 슈퍼메세지 보내기</span>
+</button>
+
+
     <p id="login-status-menu" class="center muted small" style="margin-top:12px;"></p>
 
     <div class="footerbar">
@@ -449,6 +455,37 @@
       <button id="logout-btn-chat" class="btn small">로그아웃</button>
     </div>
   </section>
+
+  <!-- ===== [PAGE] 슈퍼메세지 보내기 ===== -->
+<section id="page-supermsg" class="card hidden">
+  <img class="logo-mini" id="logo-mini-supermsg" alt="로고" />
+  <h2 class="page-title">⚡ 슈퍼메세지 보내기</h2>
+
+  <p class="muted small">
+    ※ 매치되지 않은 상대에게만 보낼 수 있고,<br>
+    ※ 한 사람에게 딱 1번만 보낼 수 있습니다.
+  </p>
+
+  <div class="row">
+    <input id="super-to" inputmode="numeric" pattern="[0-9]*" placeholder="상대방 번호 입력" />
+  </div>
+
+  <div class="spacer"></div>
+
+  <textarea id="super-text" maxlength="50" placeholder="메세지 내용 (최대 50자)"></textarea>
+
+  <div class="spacer"></div>
+  <div class="row">
+    <button id="super-cancel" class="btn">취소</button>
+    <button id="super-send" class="btn-primary">보내기</button>
+  </div>
+
+  <div class="footerbar">
+    <button id="to-menu-super" class="btn small">뒤로가기 ↩️</button>
+    <button id="logout-btn-super" class="btn small">로그아웃</button>
+  </div>
+</section>
+
 
   <!-- ===== [PAGE] 관리자 게이트 ===== -->
   <section id="page-admin-gate" class="card hidden">
@@ -637,6 +674,7 @@
     matches: $("#page-matches"),
     messages: $("#page-messages"),   // ✅ 메세지함
     chat: $("#page-chat"),           // ✅ 채팅
+    supermsg: $("#page-supermsg"),
     adminGate: $("#page-admin-gate"),
     admin: $("#page-admin")
   };
@@ -855,9 +893,37 @@ function formatTime12(dt){
 
   // ✅ 메세지함 진입 버튼
   $("#btn-messages").onclick = async ()=>{ await loadMessageList(); go("messages"); };
+  $("#super-send").onclick = async ()=>{
+  const toUid = $("#super-to").value.trim();
+  const text = $("#super-text").value.trim();
+
+  await withLoading(async ()=>{
+    await sendSuperMessage(toUid, text);
+  });
+
+  // 성공하면 메뉴로 이동(원하면 그대로 남겨도 됨)
+  go("menu");
+};
+
+  
   // ✅ 대화창 뒤로가기: 대화목록으로 복귀
   $("#back-to-messages").onclick = async ()=>{ await loadMessageList(); go("messages"); };
   $("#to-menu-msg").onclick  = ()=> go("menu");
+
+  // ✅ 슈퍼메세지 페이지 진입
+$("#btn-supermsg").onclick = ()=>{
+  $("#super-to").value = "";
+  $("#super-text").value = "";
+  go("supermsg");
+};
+
+  $("#to-menu-super").onclick = ()=> go("menu");
+$("#super-cancel").onclick = ()=> go("menu");
+
+// ✅ 로그아웃 버튼(슈퍼페이지)
+const logoutSuper = $("#logout-btn-super");
+if(logoutSuper) logoutSuper.onclick = doLogout;
+
 
   // 프로필 저장/취소
   async function loadProfile(){
@@ -881,6 +947,12 @@ function formatTime12(dt){
   async function loadBrowse(filterUid=null){
     const wrap = $("#browse-list");
     wrap.innerHTML = "";
+
+  // ✅ 슈퍼메세지 인박스(매치 없이도 목록에 뜨게)
+  const superSnap = await get(r(`superInbox/${currentUid}`));
+  const superFromIds = superSnap.exists() ? Object.keys(superSnap.val()) : [];
+
+    
     const snap = await get(r("users"));
     if(!snap.exists()){ wrap.innerHTML = `<div class="muted small">아직 가입된 사용자가 없습니다.</div>`; return; }
     const users = snap.val();
@@ -977,6 +1049,65 @@ function formatTime12(dt){
     await refreshLikeCounters();
   }
 
+  async function sendSuperMessage(toUid, text){
+  if(!currentUid) return;
+
+  // 1) 기본 검증
+  if(!/^\d+$/.test(toUid)) return alertModal("상대방 번호를 숫자로 입력하세요.");
+  if(toUid === currentUid) return alertModal("본인에게는 보낼 수 없습니다.");
+  if(!text || !text.trim()) return alertModal("메세지 내용을 입력하세요.");
+  if(text.trim().length > 50) return alertModal("50자 이내로 입력해주세요.");
+
+  // 2) 상대 존재 확인
+  if(!(await userExists(toUid))){
+    return alertModal("해당 번호가 없습니다.\n\n다시 시도해 주시기 바랍니다.");
+  }
+
+  // 3) 매치 여부 확인 (매치된 상대면 슈퍼메세지 금지)
+  const myMatchSnap = await get(r(`matches/${currentUid}/${toUid}`));
+  if(myMatchSnap.exists()){
+    const st = myMatchSnap.val()?.status;
+    if(st==="matched" || st==="meeting_requested" || st==="meeting_accepted"){
+      return alertModal("이미 매치된 상대에게는 슈퍼메세지를 보낼 수 없습니다.\n\n메세지함에서 대화해주세요.");
+    }
+  }
+
+  // 4) “한 번만” 규칙 확인
+  const sentSnap = await get(r(`superSent/${currentUid}/${toUid}`));
+  if(sentSnap.exists()){
+    return alertModal("슈퍼메세지는 한 사람에게 딱 1번만 보낼 수 있습니다.");
+  }
+
+  // 5) 실제 저장: 기존 messages 경로 재사용(채팅 UI 그대로 씀)
+  const pairKey = makeChatKey(currentUid, toUid);
+  const msgPath = r(`messages/${pairKey}`);
+  const id = Date.now()+"_"+Math.random().toString(36).slice(2,7);
+
+  const msgObj = {
+    from: currentUid,
+    to: toUid,
+    text: text.trim().slice(0,50),
+    read: false,
+    time: Date.now(),
+    super: true  // ✅ 슈퍼메세지 표시용 플래그
+  };
+
+  // 6) 추가로 “팝업 알림용 inbox”에 넣기(받는사람에게만)
+  const inboxObj = {
+    from: currentUid,
+    text: msgObj.text,
+    time: msgObj.time,
+    seen: false
+  };
+
+  await update(msgPath, { [id]: msgObj });
+  await set(r(`superInbox/${toUid}/${currentUid}`), inboxObj);
+  await set(r(`superSent/${currentUid}/${toUid}`), true);
+
+  await alertModal(`${toUid}번에게 슈퍼메세지를 보냈습니다!`);
+}
+
+
   // ===== LIKE 수신 미확인 알림 처리 =====
   async function checkUnseenLikes(){
     if(!currentUid) return;
@@ -997,21 +1128,27 @@ function formatTime12(dt){
   const wrap = $("#message-list");
   wrap.innerHTML = "";
 
-  const snap = await get(r(`matches/${currentUid}`));
-  if(!snap.exists()){ $("#no-messages").classList.remove("hidden"); return; }
-  const data = snap.val();
-  const ids = Object.keys(data)
+  const matchSnap = await get(r(`matches/${currentUid}`));
+  const matchData = matchSnap.exists() ? matchSnap.val() : {};
+
+  // ✅ 기존 매치 상대(조건 통과한 사람)
+  const matchIds = Object.keys(matchData)
     .filter(k=>{
-      const s = data[k]?.status;
+      const s = matchData[k]?.status;
       return s==="matched" || s==="meeting_requested" || s==="meeting_accepted";
-    })
-    .sort((a,b)=>Number(a)-Number(b));
+    });
+
+  // ✅ 슈퍼메세지로 연결된 상대(매치 없어도 포함)
+  const idSet = new Set([...matchIds, ...superFromIds]);
+  const ids = Array.from(idSet).sort((a,b)=>Number(a)-Number(b));
 
   if(ids.length===0){ $("#no-messages").classList.remove("hidden"); return; }
   $("#no-messages").classList.add("hidden");
 
+
   // 상대별 미읽음 수 집계
   const rows = await Promise.all(ids.map(async(other)=>{
+    const isSuperOnly = !matchData[other];  // ✅ 매치 데이터가 없으면 '슈퍼로만 연결'
     const pairKey = makeChatKey(currentUid, other);
     const msSnap = await get(r(`messages/${pairKey}`));
     let unread = 0;
@@ -1025,7 +1162,11 @@ function formatTime12(dt){
     // HTML 문자열 반환
     return `
       <div class="list-item" data-open-chat="${other}">
-        <div class="li-content"><strong>${other}번</strong></div>
+        <div class="li-content">
+        <strong>${other}번</strong>
+        ${isSuperOnly ? ` <span class="badge" style="font-size:14px;">슈퍼</span>` : ``}
+      </div>
+
         ${
           unread>0
           ? `<span class="badge badge-red">${unread}</span>`
@@ -1047,6 +1188,26 @@ function formatTime12(dt){
     const chatBox=$("#chat-box"); chatBox.innerHTML="";
     $("#chat-info").textContent="";
     go("chat");
+
+        // ✅ 매치 여부 체크해서 답장 UI 막기(슈퍼메세지 전용)
+    const mSnap = await get(r(`matches/${currentUid}/${otherUid}`));
+    const canReply = mSnap.exists(); // 매치 데이터가 있어야만 답장 가능
+
+    const inputEl = $("#chat-input");
+    const sendBtn = $("#chat-send");
+
+    if(!canReply){
+      inputEl.value = "";
+      inputEl.placeholder = "슈퍼메세지는 답장할 수 없습니다.";
+      inputEl.disabled = true;
+      sendBtn.disabled = true;
+      $("#chat-info").textContent = "⚡ 슈퍼메세지 대화는 답장이 불가능합니다.";
+    }else{
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      $("#chat-info").textContent = "";
+    }
+
 
     // 기존 리스너 해제
     if(chatListener){ try{ chatListener(); }catch{} chatListener=null; }
@@ -1171,13 +1332,17 @@ if(myCount >= 7){
     messagePairListeners = [];
 
     // 매치 목록을 보고, 각 페어 키에 대해 실시간 리스너 걸어 미읽음 총합 갱신
-    const snap = await get(r(`matches/${currentUid}`));
-    if(!snap.exists()){ setBadge(0); return; }
-    const ids = Object.keys(snap.val());
-    if(ids.length===0){ setBadge(0); return; }
+    const matchSnap = await get(r(`matches/${currentUid}`));
+    const matchIds = matchSnap.exists() ? Object.keys(matchSnap.val()) : [];
 
-    const pairs = ids.map(o=> makeChatKey(currentUid,o));
-    pairs.forEach(pairKey=>{
+    const superSnap = await get(r(`superInbox/${currentUid}`));
+    const superIds = superSnap.exists() ? Object.keys(superSnap.val()) : [];
+
+    // ✅ 합집합
+    const idSet = new Set([...matchIds, ...superIds]);
+
+    const pairs = Array.from(idSet).map(o=> makeChatKey(currentUid, o));
+  pairs.forEach(pairKey=>{
       const off = onValue(r(`messages/${pairKey}`), ()=>{
         refreshMessageBadge_recount();
       });
@@ -1188,27 +1353,37 @@ if(myCount >= 7){
     await refreshMessageBadge_recount();
   }
 
-  async function refreshMessageBadge_recount(){
-    if(!currentUid) return setBadge(0);
-    let unread = 0;
+async function refreshMessageBadge_recount(){
+  if(!currentUid) return setBadge(0);
+  let unread = 0;
 
-    const snap = await get(r(`matches/${currentUid}`));
-    if(snap.exists()){
-      const ids = Object.keys(snap.val());
-      for(const other of ids){
-        const pairKey = makeChatKey(currentUid, other);
-        const ms = await get(r(`messages/${pairKey}`));
-        if(ms.exists()){
-          const vals = ms.val();
-          for(const id in vals){
-            const m = vals[id];
-            if(m.to===currentUid && !m.read) unread++;
-          }
-        }
+  // ✅ 1) 매치 상대 목록 가져오기
+  const matchSnap = await get(r(`matches/${currentUid}`));
+  const matchIds = matchSnap.exists() ? Object.keys(matchSnap.val()) : [];
+
+  // ✅ 2) 슈퍼메세지 인박스에서 상대 목록 가져오기
+  const superSnap = await get(r(`superInbox/${currentUid}`));
+  const superIds = superSnap.exists() ? Object.keys(superSnap.val()) : [];
+
+  // ✅ 3) 둘 합치기(중복 제거)
+  const idSet = new Set([...matchIds, ...superIds]);
+
+  // ✅ 4) 모든 상대와의 messages를 열어서 미읽음 합산
+  for(const other of idSet){
+    const pairKey = makeChatKey(currentUid, other);
+    const ms = await get(r(`messages/${pairKey}`));
+    if(ms.exists()){
+      const vals = ms.val();
+      for(const id in vals){
+        const m = vals[id];
+        if(m.to===currentUid && !m.read) unread++;
       }
     }
-    setBadge(unread);
   }
+
+  setBadge(unread);
+}
+
   function setBadge(n){
   const badge = $("#msg-badge");
   if(!badge) return;
@@ -1430,6 +1605,28 @@ if(myCount >= 7){
       }
     });
     detachFns.push(()=>off3());
+
+    // ✅ 슈퍼메세지 수신 팝업
+const off4 = onValue(r(`superInbox/${currentUid}`), async snap=>{
+  if(!snap.exists()) return;
+
+  const data = snap.val();
+  for(const fromUid of Object.keys(data)){
+    const v = data[fromUid];
+    if(v && v.seen === false){
+      await alertModal(
+        `${fromUid}번에게 슈퍼메세지가 도착했습니다!\n\n"${v.text}"`,
+        "⚡ 슈퍼메세지"
+      );
+      await update(r(`superInbox/${currentUid}/${fromUid}`), { seen:true });
+
+      // 뱃지도 갱신
+      await refreshMessageBadge_recount();
+    }
+  }
+});
+detachFns.push(()=>off4());
+
 
     // 메세지 뱃지 리스너 셋업
     refreshMessageBadge_setup();
@@ -1750,4 +1947,5 @@ if(myCount >= 7){
 </body>
 
 </html>
+
 
